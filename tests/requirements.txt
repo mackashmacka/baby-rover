@@ -1,0 +1,10 @@
+# Test-harness dependencies. Installed into a repo-local .venv by `make venv`
+# (which `make test` depends on). Nothing here is installed system-wide, and
+# nothing here is needed by the firmware build.
+#
+# CLAUDE.md says "ask before installing anything". Running `make test` IS the
+# asking: the install is opt-in, repo-local, and .venv/ is already gitignored.
+pytest>=8.0,<10
+coverage>=7.4,<8
+hypothesis>=6.100,<7
+ruff>=0.6

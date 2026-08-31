@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+"""rover-bench — entry point for the Baby Rover motor characterisation bench.
+
+Run it straight out of the repo::
+
+    tools/rover-bench doctor
+    tools/rover-bench run --motor 0 --dry-run
+
+No install step, no `setup.py`, no editable-install discussion: this script
+puts `tools/` on `sys.path` and imports the package beside it.  Boring on
+purpose — one fewer thing to be broken on a laptop at a bench, and it works
+identically on the Pi.
+
+Everything else lives in `tools/rover_bench/`.  Start with its `__init__.py`,
+which maps the modules in the order they are meant to be read.
+"""
+
+import os
+import sys
+
+TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
+if TOOLS_DIR not in sys.path:
+    sys.path.insert(0, TOOLS_DIR)
+
+from rover_bench.cli import main  # noqa: E402 - path must be set up first
+
+if __name__ == "__main__":
+    raise SystemExit(main())

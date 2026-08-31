@@ -1,0 +1,31 @@
+# Baby Rover — coverage configuration.
+#
+# The gate is 80% LINE coverage and it FAILS THE BUILD (`coverage report`
+# exits 2 when the total is under fail_under, and `make test` does not swallow
+# that). Owner's instruction this session: "shitty code, lots of tests".
+#
+# branch = False deliberately: the stated gate is 80% *line* coverage. With
+# branch measurement on, coverage's total becomes a blended line+branch figure
+# and "80%" would quietly mean something other than what was asked for.
+
+[run]
+source = tools/rover_bench
+branch = False
+omit =
+    */tests/*
+    */.venv/*
+    */site-packages/*
+
+[report]
+show_missing = True
+fail_under = 80
+precision = 1
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    def __repr__
+
+[html]
+directory = htmlcov

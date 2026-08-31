@@ -1,0 +1,252 @@
+;
+; quadrature.pio — x4 quadrature decoder for one N20 magnetic encoder.
+;
+; ---------------------------------------------------------------------------
+; WHY THIS EXISTS AT ALL
+; ---------------------------------------------------------------------------
+; docs/HARDWARE.md §6.3: at a plausible 300 output rpm and ~1400 counts per
+; output revolution, one motor produces ~7,000 counts/s; four motors ~28,000.
+; Decoded with per-edge GPIO interrupts that is ~28,000 ISR entries per second
+; competing with a 100 Hz control loop, and the control loop loses.
+;
+; That figure is CONSERVATIVE for this decoder. §6.3 counts 1400 per output
+; revolution; x4 decoding sees every edge, so the real rate is up to 4x that
+; (~28,000 counts/s per motor, ~112,000 across four) - which only strengthens
+; the argument. The exact multiplier is unknown until Story 1.4 measures it;
+; see the ticks_per_output_rev note in protocol.c. A PIO
+; state machine decodes it in hardware, at 150 MHz, using zero CPU. That is
+; the whole architectural argument for PIO on this project, and it is why this
+; file is the one to read first.
+;
+; ---------------------------------------------------------------------------
+; WHAT QUADRATURE IS
+; ---------------------------------------------------------------------------
+; Two hall sensors sit 90 electrical degrees apart over a magnetic wheel on the
+; MOTOR shaft (before the 1:100 gearbox). As the shaft turns, the pair (A,B)
+; walks around a 4-state Gray-code cycle - exactly one bit changes per step:
+;
+;       forward :  (0,0) -> (1,0) -> (1,1) -> (0,1) -> (0,0) ...  A leads B
+;       reverse :  (0,0) -> (0,1) -> (1,1) -> (1,0) -> (0,0) ...  B leads A
+;
+; "x4 decoding" means counting every one of those four transitions per cycle
+; instead of only the rising edges of A. Four times the resolution for free,
+; and it is the only variant that gives a symmetric count in both directions.
+;
+; Direction is not derivable from one channel alone - that is the entire point
+; of having two. It comes from the PAIR (previous state, new state).
+;
+; ---------------------------------------------------------------------------
+; HOW THIS IMPLEMENTATION WORKS
+; ---------------------------------------------------------------------------
+; A PIO state machine has only two scratch registers, X and Y, plus the two
+; shift registers ISR and OSR which can also be used as storage via MOV. This
+; program allocates them like this, and the allocation is the design:
+;
+;       Y   = the 32-bit signed count. Lives here because "jmp y--" is the
+;             ONLY arithmetic a PIO can do, and it only works on X or Y.
+;       OSR = the PREVIOUS 2-bit pin state, carried across iterations.
+;             (We never execute a PULL or an OUT, so autopull MUST be off and
+;             OSR is simply a spare register.)
+;       X   = the freshly sampled pin state, scratch.
+;       ISR = built up into a 4-bit index, then used as a computed jump target.
+;
+; Each iteration forms the 4-bit number
+;
+;       index = (previous_state << 2) | new_state
+;
+; and jumps straight to instruction number `index`. The first sixteen
+; instructions of the program are therefore a jump table with one entry per
+; possible transition, which is why the program declares `.origin 0`: the
+; table entries must live at absolute addresses 0..15 for `mov pc, isr` to
+; land on them.
+;
+; That trades sixteen instructions of program memory for a decode that costs
+; zero comparisons and zero branches-not-taken. Total: 30 of the 32
+; instructions in a PIO block, and all four motors share this one copy - a PIO
+; block holds one program but runs four independent state machines on it.
+;
+; STATE NUMBERING - read this before the table, or the table looks wrong.
+;
+; `in pins` and `mov x, pins` are relative to PINCTRL_IN_BASE, which the helper
+; at the bottom of this file sets to the A pin. So bit 0 = A (GP12) and
+; bit 1 = B (GP13), and a state is the two-bit number  [B A]  =  B*2 + A :
+;
+;       (A=0,B=0) = 0 = 00      (A=1,B=0) = 1 = 01
+;       (A=1,B=1) = 3 = 11      (A=0,B=1) = 2 = 10
+;
+; Careful: the bits are printed MSB-first as [B A], so the state written "01"
+; is A=1, B=0. Every two-bit string in the table below is in that [B A] order.
+; Rewriting the two cycles above in state numbers:
+;
+;       forward :  0 -> 1 -> 3 -> 2 -> 0
+;       reverse :  0 -> 2 -> 3 -> 1 -> 0
+;
+; Whether "forward" here is physically forward is settled on the bench and
+; corrected in firmware, never by swapping the wires (docs/WIRING.md §3).
+;
+; Transitions where BOTH bits changed (index 3, 6, 9, 12) are impossible for a
+; real encoder. They mean a missed sample or a glitch, and the direction is
+; genuinely unknowable, so they are ignored rather than guessed at. At the
+; ~16.7 M samples/s derived at the bottom of this file, that is a ~2400x margin
+; against §6.3's 7 k counts/s and still ~600x against the x4 figure above, so
+; seeing one at all is a fault worth investigating, not a routine event.
+;
+; ---------------------------------------------------------------------------
+
+.program quadrature
+.origin 0                       ; MANDATORY: the jump table below is addressed
+                                ; absolutely by `mov pc, isr`, so the program
+                                ; must be loaded at instruction memory 0.
+
+; ===========================================================================
+; Addresses 0..15 - the transition jump table, indexed by (prev << 2) | new
+; ===========================================================================
+;      addr   prev -> new   (states as [B A])
+    jmp loop                    ;  0    0  -> 0    00 -> 00   no change
+    jmp increment               ;  1    0  -> 1    00 -> 01   forward
+    jmp decrement               ;  2    0  -> 2    00 -> 10   reverse
+    jmp loop                    ;  3    0  -> 3    00 -> 11   impossible
+    jmp decrement               ;  4    1  -> 0    01 -> 00   reverse
+    jmp loop                    ;  5    1  -> 1    01 -> 01   no change
+    jmp loop                    ;  6    1  -> 2    01 -> 10   impossible
+    jmp increment               ;  7    1  -> 3    01 -> 11   forward
+    jmp increment               ;  8    2  -> 0    10 -> 00   forward
+    jmp loop                    ;  9    2  -> 1    10 -> 01   impossible
+    jmp loop                    ; 10    2  -> 2    10 -> 10   no change
+    jmp decrement               ; 11    2  -> 3    10 -> 11   reverse
+    jmp loop                    ; 12    3  -> 0    11 -> 00   impossible
+    jmp decrement               ; 13    3  -> 1    11 -> 01   reverse
+    jmp increment               ; 14    3  -> 2    11 -> 10   forward
+    jmp loop                    ; 15    3  -> 3    11 -> 11   no change
+
+; ===========================================================================
+; Address 16..19 - Y = Y + 1
+;
+; PIO cannot add. It can only decrement (`jmp y--`). Incrementing is done with
+; the two's-complement identity:
+;
+;       ~( ~y - 1 )  ==  y + 1
+;
+; Worked through: let u = ~y = -y-1. Then u-1 = -y-2, and ~(u-1) = -(-y-2)-1
+; = y+1. Two inversions and one decrement, four instructions, no carry chain.
+; ===========================================================================
+increment:
+    mov y, ~y                   ; 16  y = ~y
+    jmp y--, inc_wrap           ; 17  y = y - 1 (the decrement ALWAYS happens;
+                                ;     the branch is only taken if y was
+                                ;     non-zero, and the target is the next
+                                ;     instruction anyway, so both paths agree)
+inc_wrap:
+    mov y, ~y                   ; 18  y = ~y  => original + 1
+    jmp loop                    ; 19
+
+; ===========================================================================
+; Address 20..21 - Y = Y - 1
+; ===========================================================================
+decrement:
+    jmp y--, loop               ; 20  decrement, and branch if it was non-zero
+    jmp loop                    ; 21  ...and land in the same place if it was 0
+
+; ===========================================================================
+; Address 22..29 - the sampling loop
+; ===========================================================================
+public loop:
+    mov isr, y                  ; 22  copy the count into the shift register
+    push noblock                ; 23  offer it to the RX FIFO. `noblock` means
+                                ;     a full FIFO discards the value instead of
+                                ;     stalling the state machine - the count in
+                                ;     Y is the truth, the FIFO is only a window
+                                ;     onto it, and stalling would lose edges.
+    mov isr, null               ; 24  clear ISR (value and shift counter) so the
+                                ;     index is built from a known zero.
+    in osr, 2                   ; 25  ISR = previous state           (bits 1..0)
+    mov x, pins                 ; 26  X = live pin snapshot, rotated so that
+                                ;     bit 0 = A and bit 1 = B. (Higher bits are
+                                ;     other GPIOs and are harmless - only the
+                                ;     low 2 are ever used.)
+    in x, 2                     ; 27  ISR = (previous << 2) | new     (4 bits)
+    mov osr, x                  ; 28  previous := new, ready for the next pass
+    mov pc, isr                 ; 29  computed jump into the table at 0..15
+                                ;     - this is the "decode", and it costs one
+                                ;     instruction.
+;
+; Loop cost: 8 instructions plus 1 for the table entry = 9 cycles. At the
+; default clock divider of 1 on a 150 MHz RP2350 that is ~16.7 million samples
+; per second against a worst case of ~7,000 encoder edges per second. The
+; decoder cannot miss an edge unless the wiring is producing something that is
+; not quadrature.
+;
+
+% c-sdk {
+#include <assert.h>
+
+#include "hardware/clocks.h"
+#include "hardware/gpio.h"
+
+/*
+ * Configure and start one state machine on this program.
+ *
+ * pin_a must be the LOWER of the two consecutive GPIOs; pin_b is pin_a + 1.
+ * The program is loaded at offset 0 (see .origin), which is asserted here
+ * because everything above depends on it.
+ */
+static inline void quadrature_program_init(PIO pio, uint sm, uint offset,
+                                           uint pin_a)
+{
+    assert(offset == 0);   /* .origin 0 - the jump table is addressed absolutely */
+    (void)offset;
+
+    /* Route both pins to this PIO block and enable pull-ups.
+     *
+     * Pull-ups: the hall outputs on these N20 encoders drive both rails, so
+     * the pull-up is not strictly required - but it makes a disconnected
+     * encoder read a steady HIGH instead of floating, and RP2350 erratum E9
+     * (internal pull-DOWNS can latch high) only affects pull-downs, so
+     * pulling up sidesteps it entirely. See CLAUDE.md. */
+    pio_gpio_init(pio, pin_a);
+    pio_gpio_init(pio, pin_a + 1u);
+    gpio_pull_up(pin_a);
+    gpio_pull_up(pin_a + 1u);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_a, 2, false /* = inputs */);
+
+    pio_sm_config c = quadrature_program_get_default_config(offset);
+
+    /* IN base: bit 0 of every `in pins` / `mov x, pins` is this pin. */
+    sm_config_set_in_pins(&c, pin_a);
+
+    /* Shift LEFT (shift_right = false) so that successive `in`s append at the
+     * bottom: after `in osr,2` then `in x,2` the ISR holds prev<<2 | new.
+     * Autopush OFF - the pushes in the program are explicit. */
+    sm_config_set_in_shift(&c, false /* shift_right */, false /* autopush */, 32);
+
+    /* Autopull OFF. OSR is being used as a plain storage register for the
+     * previous pin state; with autopull on, the state machine would try to
+     * refill it from the TX FIFO and destroy that value. */
+    sm_config_set_out_shift(&c, false /* shift_right */, false /* autopull */, 32);
+
+    /* Full speed. The decoder costs no CPU, so there is nothing to save by
+     * running it slower, and a faster sample rate is a wider margin against
+     * missing an edge. */
+    sm_config_set_clkdiv(&c, 1.0f);
+
+    /* Start at the sampling loop, not at instruction 0 - instruction 0 is a
+     * jump-table entry and would be nonsense to execute from cold. */
+    pio_sm_init(pio, sm, offset + quadrature_offset_loop, &c);
+
+    /* Registers are not guaranteed zero out of reset, and the count and the
+     * "previous state" both need a defined starting value. Inject the writes
+     * directly into the state machine before enabling it.
+     *
+     * Consequence: the first sampled state is compared against 00. If the
+     * shaft happens to be resting at 11, that first comparison scores as an
+     * impossible transition and is ignored. One count of startup uncertainty,
+     * on a counter whose absolute value means nothing anyway - only deltas
+     * are used. */
+    pio_sm_exec(pio, sm, pio_encode_set(pio_y, 0));            /* count = 0 */
+    pio_sm_exec(pio, sm, pio_encode_mov(pio_osr, pio_null));   /* prev  = 00 */
+    pio_sm_exec(pio, sm, pio_encode_mov(pio_isr, pio_null));
+
+    pio_sm_clear_fifos(pio, sm);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

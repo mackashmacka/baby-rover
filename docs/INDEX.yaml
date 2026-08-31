@@ -1,0 +1,157 @@
+# Baby Rover — annotated repo index.
+#
+# path: one-line purpose. Maintained BY HAND, on purpose: a regenerated index
+# describes the file tree, which `ls` already does. This one says what each
+# file is FOR, which only a human (or an agent that just wrote it) knows.
+#
+# Printed by:  tools/session.py index
+# Audited by:  tools/session.py index --check   (exit 1 if a file is unindexed)
+#
+# Format is a deliberately tiny YAML subset, parsed by hand in session.py
+# because PyYAML is a third-party import and this repo must work on a bare
+# Python 3.12. Two levels only:
+#
+#     Group heading:
+#       path/to/file: one line, no line breaks
+#
+# Files marked "⬜ not created yet" by the index command are expected but
+# absent — that is information, not an error.
+
+The operating agreement (read in this order):
+  CLAUDE.md: The operative agent instructions — prime directive, hardware, conventions, and the operating modes including the CLOSE ritual.
+  AGENTS.md: Pointer file for non-Claude agents; names CLAUDE.md and the reading order.
+  NEXT-STEPS.md: Session state. The handoff a fresh session reads to learn current state, blockers and open threads. Rewritten at every close.
+  docs/agent-bootstrap.md: The operating-modes spec exactly as the owner was given it. Source of truth for the wording; CLAUDE.md holds the operative version.
+
+Planning and the record:
+  docs/PLAN.md: The three-week plan — epics, stories 1.1-3.5, acceptance criteria, the two-venue decision, and what is deliberately out of scope.
+  docs/career-track.md: The portfolio pipeline — report, LinkedIn, CV, outreach. Runs in parallel with the build, not after it.
+  docs/project-state.md: Hardware inventory and verified/unverified state as captured on 2026-08-31, before the laptop migration.
+  BABY-ROVER.md: Full system audit of the Raspberry Pi 5. Read before changing anything on that box.
+
+Hardware ground truth:
+  docs/HARDWARE.md: Ground-truth spec — part numbers, ratings, derived constants. Stable; changes only when a part does.
+  docs/WIRING.md: The living connection record — pin maps, harness colours, what is wired right now, and the analyser probe map.
+  docs/ARCHITECTURE.md: Living map of components, data flows, module boundaries and their invariants. Updated as part of finishing any story that moves structure.
+  docs/setup.md: The Day 0 setup runbook and its seven acceptance criteria.
+  docs/BENCH.md: The bench setup manual — how to build it, how to prove the instrument before trusting it, how to move to the next motor.
+  docs/experiments/pid-tuning.md: Story 1.6 specification — the step-response procedure, before and after tuning.
+  docs/experiments/motor-char.md: Story 1.5 specification — the per-motor characterisation procedure, in enough detail to repeat it identically four times.
+
+Memory — wiki layer (undated topic pages, revised in place):
+  memory/MEMORY.md: The index. One line per memory file, both layers. Read at every session start.
+  memory/n20-motors.md: The N20 gearmotors — 6 V 1:100, wire colours, the wrong-wires trap, and the unresolved counts-per-rev.
+  memory/power-supply.md: Judge a supply by its sag under load; why the 6F22 and the 6xAA plan are both wrong parts.
+  memory/logic-analyser.md: The FX2 clone 0925:3881 — why Windows blocked it, why Linux does not, and the channel map.
+  memory/pico-toolchain.md: MicroPython was the bring-up tool; pico-sdk is the recommendation. Decision due on Day 0.
+  memory/debugging-method.md: Walk the causal chain, then split the system in half. The two techniques that earned their keep on day one.
+
+Memory — log layer (dated, append-only):
+  memory/2026-08-31-first-motor-under-pico.md: First N20 driven forward and reverse from the Pico, and the evening lost to encoder wires in the H-bridge outputs.
+
+Skills (.claude/skills — reusable, hard-won, never speculative):
+  .claude/skills/close-ritual/SKILL.md: How to close a story or a session properly, and what each CLOSE item actually means.
+  .claude/skills/rover-bench/SKILL.md: How to run a characterisation campaign safely — probe map, interlocks, what a good run looks like. PROVISIONAL until the first real run.
+  .claude/skills/memory-lint/SKILL.md: When and how to run the third verb over memory/ and .claude/skills/.
+
+Host tooling (tools/):
+  tools/session.py: The session ritual tool — start, journal, wiki, close, lint, index. Stdlib only; runs before anything is installed.
+  tools/bench-setup.sh: One-shot laptop bench setup — toolchains, udev rules, group membership. Run once with sudo; everything else is blocked on it.
+  tools/rover_bench/__init__.py: The host-side bench driver package — "characterise a motor" as one repeatable command that leaves evidence behind.
+  tools/rover_bench/link.py: The serial link to the Pico. One transport seam, so the whole link is testable against a fake.
+  tools/rover_bench/analyser.py: Thin wrapper over sigrok-cli for the FX2 analyser. Headless only; sample rate discovered at runtime, never assumed.
+  tools/analysis/__init__.py: Host-side analysis package — turns a run directory into numbers and plots.
+  tools/rover_bench/experiment.py: The experiments expressed as data plus pure maths, so a run is reproducible rather than merely repeated.
+  tools/rover_bench/manifest.py: The reproducibility record — every run gets a sidecar JSON naming commit, arguments and conditions.
+  tools/rover_bench/registry.py: Appends a row to experiments/REGISTRY.md idempotently, so the record is written by the tool and not by memory.
+  tools/rover_bench/safety.py: Pre-flight interlocks. Refuses to run rather than break hardware.
+  tools/rover_bench/storage.py: Deterministic output layout — you never choose a filename, so two runs are always comparable.
+  tools/analysis/load.py: Reads and validates a run directory; refuses to analyse runs that are not comparable.
+  tools/analysis/metrics.py: Derived numbers, one small pure function each, every one returning its uncertainty alongside its value.
+  tools/analysis/synthetic.py: Generates realistic fake run data so every other module is testable with zero hardware.
+  tools/rover-bench: The executable entry point — `tools/rover-bench <experiment>`. Thin; everything real is in the package.
+  tools/rover_bench/cli.py: Argument parsing, the world object, and one function per subcommand. Every expected failure is caught and printed with its fix.
+  tools/rover_bench/doctor.py: What is installed, what is plugged in, what is missing — the thing to run before blaming the code.
+  tools/rover_bench/fakes.py: The fake Pico, fake sigrok and virtual clock the whole suite runs against. No test may need real hardware.
+  tools/analysis/report.py: Assembles loaded runs into tables and figures. It produces raw material, never prose — the owner writes the report.
+  tools/analysis/plots.py: Matplotlib figures, one function per figure, each captioned from the run's own parameters.
+  tools/analysis/README.md: How the analysis package is laid out and what each refusal in it is protecting.
+
+Test harness (host-side, no hardware required):
+  Makefile: Entry points — make test, test-hw, lint, coverage, doctor. Builds a repo-local .venv from a bare checkout.
+  pytest.ini: Pytest configuration. Hardware-marked tests are deselected by default, forever.
+  .coveragerc: Coverage configuration. The 80% LINE coverage gate that fails the build.
+  tests/conftest.py: Shared fixtures, and the autouse guard that enforces "nothing in the default suite touches hardware".
+  tests/requirements.txt: Pinned host-side test dependencies, installed into the repo-local venv.
+  tests/test_firmware_protocol.py: The firmware's own command parser, compiled with the host cc and driven through ctypes — round-trips and every malformed input anyone could think of.
+  tests/test_analyser.py: The sigrok-cli wrapper, against a fake sigrok.
+  tests/test_cli.py: The rover-bench command-line interface.
+  tests/test_experiment.py: Experiment orchestration — the part that makes a run reproducible.
+  tests/test_link.py: The UART link to the Pico, against a fake transport.
+  tests/test_manifest.py: Run manifests — what ran, from which commit, with which arguments, when.
+  tests/test_firmware_control.py: PID, anti-windup, the TB6612 truth table, PWM levels and the ticks→rad/s conversion, as pure host functions with no Pico.
+  tests/test_registry.py: Registry row appending — written when the experiment runs, never later.
+  tests/test_safety.py: One test per safety interlock, each asserting a refusal.
+  tests/test_storage.py: Where a run's files go — derived from the experiment ID and motor number and nothing else.
+  tests/test_docs_consistency.py: Pins the documents to the code — pin map, PWM/loop rates, baud, the two analyser maps, the counts-per-rev dispute. Documentation drift is the most likely real failure here.
+  tests/doctor.sh: make doctor — reports what is installed, what is plugged in, what is missing. Always exits 0.
+  tests/README.md: How the suite is organised, what the markers mean, and why nothing in the default run touches hardware.
+  tests/firmware_shim.c: Compiles the host-pure firmware sources into a shared library so ctypes can drive control.c and protocol.c on the laptop.
+  tests/test_doctor.py: The doctor command, against fakes — it must report a broken bench, never crash on one.
+  tests/test_hardware_smoke.py: The only `-m hardware` file. Deselected by default; run with `make test-hw` at the bench.
+  tests/test_harness_selfcheck.py: Tests the test harness: markers, ini keys, the no-subprocess guard, the coverage gate. Guards against a suite that passes by testing nothing.
+  tests/test_property_parsers.py: Hypothesis property tests over the parsers. SKIPS ENTIRELY if hypothesis is not installed — check the skip line before trusting a green run.
+  tools/analysis/tests/conftest.py: Fixtures for the analysis suite. NOTE: this tree is outside pytest.ini's testpaths, so `make test` does not run it.
+  tools/analysis/tests/test_load.py: The run loader and its comparability refusals.
+  tools/analysis/tests/test_metrics.py: The derived numbers and their uncertainties.
+  tools/analysis/tests/test_plots.py: The figures — that they are produced and captioned from the run's own parameters.
+  tools/analysis/tests/test_report.py: The assembled report — including that it cannot emit narrative prose.
+  tools/analysis/tests/test_synthetic.py: The synthetic data generator, so the fixtures the other suites trust are themselves checked.
+
+Experiments (a result not persisted did not happen):
+  experiments/REGISTRY.md: One row per experiment, written when it is run. ID, date, story, question, method, result, data.
+  experiments/bench-verify/verify-20khz.csv: A 20 kHz square wave capture. SYNTHETIC — its header says libsigrok's session-emulating driver, not the FX2. Replace it with a real capture, or rename it.
+  experiments/plots/.gitkeep: Placeholder; plots generated from run data live here.
+  docs/experiments/: Per-experiment write-ups that are too long for a registry cell.
+  experiments/README.md: The run-directory and manifest contract: what a run directory holds and what every field means.
+  docs/experiments/README.md: Index of the per-experiment write-ups in this directory.
+  experiments/failsafe/.gitkeep: Story 2.1 — measured time from last valid command to motors stopped. Empty until it runs.
+  experiments/fusion-ladder/.gitkeep: Story 2.5 — closure error at each of four fusion stages. Empty until it runs.
+  experiments/gps-scatter/.gitkeep: Story 2.4 — static fix scatter and CEP. Empty until it runs.
+  experiments/gyro-drift/.gitkeep: Story 2.2 — heading drift of an integrated stationary gyro. Empty until it runs.
+  experiments/mag-motor/.gitkeep: Story 2.3 — heading error vs motor duty cycle. Empty until it runs.
+  experiments/motor-char/.gitkeep: Story 1.5 — the duty→speed sweep, four motors. Empty until it runs.
+  experiments/pid-step/.gitkeep: Story 1.6 — step response before and after tuning. Empty until it runs.
+  experiments/power-sag/.gitkeep: Story 1.1 — terminal voltage vs load current per candidate supply. Empty until it runs.
+  experiments/pwm-capture/.gitkeep: Story 1.3 — actual duty, frequency and reversal deadtime. Empty until it runs.
+  experiments/quad-phase/.gitkeep: Story 1.4 — is A/B phasing correct in both directions? Empty until it runs.
+  experiments/reports/.gitkeep: Generated raw-material files from `rover-bench report`. Not the report.
+  experiments/stop-distance/.gitkeep: Story 2.6 — minimum stopping distance vs the D415 blind zone. Empty until it runs.
+  experiments/ticks-per-m/.gitkeep: Story 1.4 — encoder ticks per metre, pushed a known distance. Empty until it runs.
+  experiments/wiring-map/.gitkeep: Story 1.2 — resistance and continuity of all 24 motor wires. Empty until it runs.
+
+Firmware and Pi (not started):
+  firmware/.gitkeep: Placeholder from the original scaffold; removable once firmware/src is committed.
+  firmware/src/board_config.h: Pin map and fixed timing constants for the characterisation bench, in one place.
+  firmware/src/control.h: Pure control maths — PID, feedforward, unit conversion. Host-pure: no pico-sdk includes, so it is testable.
+  firmware/src/control.c: Implementation of the pure control maths. See control.h for the reasoning.
+  firmware/src/protocol.h: The line-oriented ASCII command protocol contract. Host-pure, for the same reason.
+  firmware/src/protocol.c: The command parser. See protocol.h for the contract.
+  firmware/src/motor.h: TB6612FNG channel-A control for the motor under test. Host-pure header, so the maths under it stays testable.
+  firmware/src/motor.c: The TB6612 hardware layer — plumbing only; the maths it uses lives in control.c and is tested on the host.
+  firmware/src/quadrature.pio: PIO assembly — x4 quadrature decoding for one N20 magnetic encoder, running independently of the CPU.
+  pi/.gitkeep: Placeholder. Pi 5 Python — RealSense, obstacle detection, state estimation, navigation. Its role starts at Story 2.6.
+  firmware/README.md: How the firmware is laid out, the wire protocol table, and what is trustworthy before Story 1.4 measures ticks-per-rev.
+  firmware/FAILSAFE.md: The link-loss failsafe: the decisions behind it and how to prove on the analyser that it works.
+  firmware/CMakeLists.txt: The pico-sdk build. NEVER YET RUN — no PICO_SDK_PATH and no pioasm on this machine, so quadrature.pio is unassembled.
+  firmware/src/main.c: The 100 Hz control loop, the command dispatch and the failsafe. The only file that touches all the others.
+  firmware/src/encoder.h: Quadrature decoder contract. A false from encoder_init() is fatal to closed loop, not to open-loop work.
+  firmware/src/encoder.c: Loads quadrature.pio into a PIO state machine and reads the count. No interrupts — that is the whole point.
+  firmware/src/instrument.h: LOOP_TICK and COMPUTE_BUSY. LOOP_TICK toggles ONCE per iteration: one edge is one iteration.
+  firmware/src/instrument.c: Two GPIO writes per control tick, so the analyser can measure the loop the firmware cannot measure about itself.
+
+Repo plumbing:
+  .gitignore: What never gets committed — secrets, build artefacts, and large raw captures. CSVs and manifests ARE committed.
+  docs/INDEX.yaml: This file. Path to one-line purpose, for every file in the repo.
+  docs/media/.gitkeep: Placeholder for bench photographs and failure videos. Film the failures too.
+  tools/.gitkeep: Placeholder from the original scaffold; removable once tools/ is unambiguously populated.

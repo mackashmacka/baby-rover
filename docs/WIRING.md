@@ -129,12 +129,19 @@ have already saved an evening once:
 
 ### Channel assignment
 
-| Position | Driver | Channel | PWM | Encoder A/B |
-|---|---|---|---|---|
-| Left front | #1 | A | `GP2` | `GP12` / `GP13` |
-| Left rear | #1 | B | `GP6` | `GP14` / `GP15` |
-| Right front | #2 | A | `GP7` | `GP16` / `GP17` |
-| Right rear | #2 | B | `GP10` | `GP18` / `GP19` |
+| Motor | Position | Driver | Channel | PWM | Encoder A/B |
+|---|---|---|---|---|---|
+| **0** | Left front | #1 | A | `GP2` | `GP12` / `GP13` |
+| **1** | Left rear | #1 | B | `GP6` | `GP14` / `GP15` |
+| **2** | Right front | #2 | A | `GP7` | `GP16` / `GP17` |
+| **3** | Right rear | #2 | B | `GP10` | `GP18` / `GP19` |
+
+The **Motor** column is the number the tooling uses: `rover-bench --motor <n>`,
+the `motor-<n>/` directory in `experiments/`, and `MOTORS = (0, 1, 2, 3)` in
+`tools/rover_bench/storage.py`. It was already implicit in the row order of this
+table and in that module's comment; it is written down here so a directory
+called `motor-2` is unambiguously the right front wheel. Added 2026-08-31 —
+nothing was rewired.
 
 Driver #1 direction pins ← `GP3`/`GP4` (both channels, tied).
 Driver #2 direction pins ← `GP8`/`GP9` (both channels, tied).
@@ -247,3 +254,98 @@ Append a line whenever wiring changes. Newest last.
 | 2026-08-31 | Stage 1 recorded: one motor, driver #1, `VM` on VBUS as a stopgap |
 | 2026-08-31 | Harness colours corrected to the real N20 mapping (red/white motor, black GND, blue 3.3 V, yellow/green halls). **Supersedes the previous `P1`–`P6` numbered pinout, which described a different motor and is void** |
 | 2026-08-31 | Full four-motor pin map drafted; encoders assigned `GP12`–`GP19` |
+| 2026-08-31 | **Bench instrumentation committed — see §10.** `GP20` = `LOOP_TICK`, `GP21` = `COMPUTE_BUSY`. Analyser D6/D7 move off the UART pins for Stories 1.5/1.6 |
+
+---
+
+## 10. Bench instrumentation — 2026-08-31 🟡
+
+**Added for Story 1.5 (`motor-char`) and Story 1.6 (`pid-step`).** Setup
+manual, safety interlocks and verification procedure:
+[`BENCH.md`](BENCH.md). This section records only *what is connected*.
+
+Two previously-spare GPIO are now committed to instrumentation, and the
+analyser channel map changes for the duration of the characterisation campaign.
+
+### 10.1 New instrumentation pins
+
+| GP | Pin | Signal | Direction | Purpose | Status |
+|---|---|---|---|---|---|
+| `GP20` | 26 | `LOOP_TICK` | out | Firmware **toggles** once per PID iteration. Measures the real control-loop period and its jitter | 🟡 |
+| `GP21` | 27 | `COMPUTE_BUSY` | out | Firmware holds **HIGH while the loop body computes**. Measures execution time per iteration ⇒ CPU headroom | 🟡 |
+
+Both are outputs from the Pico to the analyser only. **Nothing else connects to
+them** — no driver input, no motor, no Pi.
+
+> ⚠️ **`LOOP_TICK` toggles.** One loop period is **edge to edge**, not rising to
+> rising. One edge is one iteration, so at 100 Hz that is **100 edges/s** and a
+> **50 Hz** square wave — a rising-to-rising or frequency reading reports half
+> the loop rate. See [`BENCH.md`](BENCH.md) §3.1.
+
+**Spare GPIO after this change:** `GP11`, `GP22`, `GP26`–`GP28`.
+(`GP20`/`GP21` were listed as spare in §3; they are not any more.)
+**`GP23/24/25/29` remain unusable** — CYW43439.
+
+### 10.2 Analyser channel map — characterisation bench
+
+All 3.3 V logic. Ground the analyser to the common rail — the nearest header
+GNDs are **pin 3** (D0–D3), **pin 18** (D4/D5) and **pin 28** (D6/D7). Connect
+every ground lead the analyser has.
+
+| CH | Signal | Pico GP | Pico pin |
+|---|---|---|---|
+| D0 | `PWMA` | `GP2` | 4 |
+| D1 | `AIN1` | `GP3` | 5 |
+| D2 | `AIN2` | `GP4` | 6 |
+| D3 | `STBY` | `GP5` | 7 |
+| D4 | Encoder A (yellow) | `GP12` | 16 |
+| D5 | Encoder B (green) | `GP13` | 17 |
+| **D6** | **`LOOP_TICK`** | **`GP20`** | **26** |
+| **D7** | **`COMPUTE_BUSY`** | **`GP21`** | **27** |
+
+⚠️ **Never `AO1`/`AO2`/`BO1`/`BO2`** — rule 4. Motor voltage destroys the
+analyser, and it fails by reading garbage on a channel you then trust.
+
+### 10.3 Relationship to §8
+
+**§8 is not superseded — the two maps swap according to which question is being
+asked**, and only D6/D7 differ:
+
+| CH | §8 map | §10.2 map (this one) |
+|---|---|---|
+| D6 | UART TX — `GP0`, pin 1 | `LOOP_TICK` — `GP20`, pin 26 |
+| D7 | UART RX — `GP1`, pin 2 | `COMPUTE_BUSY` — `GP21`, pin 27 |
+
+| Use this map | For | Because |
+|---|---|---|
+| **§10.2** | Stories **1.5**, **1.6** — characterisation and PID tuning | The UART *content* is already readable at the laptop end of the wire, so decoding it again is redundant. **Loop timing has no other witness**, and an unverified loop rate silently rescales every `omega_rad_s` |
+| **§8** | Story **2.1** — the Pi↔Pico failsafe | There the measurement is "last valid byte → motors stopped", which needs UART TX and `STBY` on one timebase. Loop timing is then the redundant pair |
+
+**Record which map a capture was taken under**, in the filename or the run log.
+A `.sr` file whose D6 could be either signal is not evidence of anything.
+
+### 10.4 Bench power — differs from §2
+
+The characterisation bench does **not** use the §2 stopgap of `VM` on `VBUS`.
+That arrangement puts motor current on the Pico's rail (rule 8) and was
+acceptable only for bring-up smoke tests.
+
+| Rail | Source | Feeds |
+|---|---|---|
+| `VM` | **Lab PSU, 5.00 V, current limit 1.00 A** | TB6612 `VM` only |
+| Logic 3.3 V | Pico `3V3(OUT)`, pin 36 | TB6612 `VCC`, motor **blue** (encoder power) |
+| Pico | USB from the laptop | — |
+| Ground | one common rail | Pico, TB6612, PSU −, motor **black**, analyser |
+
+**Power on: Pico USB first, then `VM`. Power off: `VM` first, then Pico.** The
+Pico must be driving `STBY` and the direction pins to a defined state before the
+H-bridge has a supply, or the motor can lurch on power-up.
+
+### 10.5 Proposed, not yet wired ⬜
+
+| Part | From | To | Why |
+|---|---|---|---|
+| 10 kΩ resistor | `STBY` (`GP5`, pin 7) | GND rail | RP2350 comes out of reset with GPIO as inputs, and **erratum RP2350-E9** says internal pull-downs can latch high — so "`STBY` is low at reset" is not guaranteed by the chip. An external pull-down makes *driver disabled until firmware says otherwise* a property of the circuit rather than of the software |
+
+**Awaiting the owner's sign-off.** One resistor; removes a class of power-up
+lurch.
