@@ -64,6 +64,25 @@ milliamps; battery energy enters separately; the motor receives switched power.
 
 ---
 
+### Boundary 3 — firmware ⇄ bench: **commands, not behaviour**
+
+Added 2026-08-31. The Pico exposes a line-oriented ASCII command surface over
+USB CDC (`SET`, `STOP`, `ENC?`, `TELEM`, `PID`, …) and makes **no experimental
+decisions**. The experiment lives entirely on the host, in
+`tools/rover_bench/`.
+
+The invariant: **the firmware never knows which experiment is running.** That
+is what lets the same firmware serve Story 1.5 characterisation, Story 1.6 PID
+tuning and the Story 2.1 failsafe test, and it is what stops an agent
+improvising a slightly different measurement on motor 3 than it used on motor
+1. Four datasets that cannot be compared are worse than none, because they look
+like data.
+
+The same framing becomes the Pi⇄Pico protocol at Story 2.1 — the FTDI FT232R
+stands in for the Pi until then. Built once, not twice.
+
+---
+
 ## 2. Pin map (Pico 2 W)
 
 19 of 26 usable GPIO. Direction pins are shared per side — both wheels on a
@@ -80,8 +99,17 @@ while saving four pins.
 | GP5 | 7 | STBY — global hardware enable | ✅ |
 | GP6–GP11 | — | right side PWM + direction | ⬜ |
 | GP12–GP19 | 16–24 | 8 encoder channels (A = lower pin, B = higher) | ⬜ |
+| GP20 | 26 | **LOOP_TICK** — toggles once per control iteration | ✅ |
+| GP21 | 27 | **COMPUTE_BUSY** — HIGH across the loop body | ✅ |
 
 Do not use **GP23/24/25/29** — wired to the CYW43439 internally.
+
+`GP20`/`GP21` exist only to be watched. The firmware cannot measure its own
+timing honestly — a loop that has stalled cannot notice it has stalled — so it
+exports the two facts an external instrument can turn into numbers: iteration
+period (from LOOP_TICK edges) and CPU duty (from COMPUTE_BUSY's high time).
+Two GPIO writes per tick, and they are what make this a *control-system*
+characterisation rather than a motor one.
 
 ---
 
@@ -141,19 +169,54 @@ Verified: forward and reverse, 20 kHz PWM, commanded from the MicroPython REPL.
 - `VM` comes from USB VBUS, not a battery — motor current shares a rail with
   the Pico, violating Boundary 2's separation. Temporary. See
   [`memory/power-supply.md`](../memory/power-supply.md).
-- No firmware file exists; all behaviour was typed at the REPL and does not
-  survive a power cycle.
+
+---
+
+## 4b. Currently built (Stage 2 — the bench) ✅ *added 2026-08-31*
+
+The instrument, not the rover. All of it runs on the **laptop**; the Pi has no
+hardware attached and its role does not begin until Story 2.6.
+
+| Component | Where | State |
+|---|---|---|
+| Characterisation firmware | `firmware/` | builds clean → `rover_bench.uf2` (105 K), **not yet flashed** |
+| PIO x4 quadrature decoder | `firmware/src/quadrature.pio` | written, **never run against a real encoder** |
+| 100 Hz PID + anti-windup | `firmware/src/control.c` | host-tested, **never closed against a real motor** |
+| Link-loss failsafe (300 ms) | `firmware/src/main.c` | implemented, **timing not yet measured on the analyser** |
+| Host bench driver | `tools/rover_bench/` | 1137 tests, 89 % line coverage |
+| Analysis + plots | `tools/analysis/` | works against synthetic data only |
+| Session/journal machinery | `tools/session.py` | working; stdlib only, runs before anything is installed |
+| Logic analyser | `sigrok-cli`, `fx2lafw` | **PROVEN** — 19,999.0 Hz @ 50.00 %, 10 ns jitter |
+
+**The honest line:** everything above is verified in software and against one
+known square wave. Nothing in it has yet moved a motor. The distinction matters
+and should not be allowed to blur.
+
+**Invariant introduced by the bench:** every run writes a manifest naming the
+commit, the firmware SHA, the exact argv and the sample rate actually used. A
+run without a manifest is not evidence, and two runs whose manifests differ in
+a way that affects the measurement are not comparable — `tools/analysis/load.py`
+refuses them rather than quietly averaging them.
 
 ---
 
 ## 5. Repo layout
 
 ```
-firmware/          Pico firmware + Arduino learning sketches
-pi/            ⬜  Python: RealSense, obstacle detection, navigation
-docs/              wiring guides, architecture, decisions and rationale
-tools/         ⬜  host-side scripts (serial monitor, analyser helpers)
+firmware/          ✅ Pico 2 W firmware (pico-sdk C) — PWM, PIO quadrature,
+                      100 Hz PID, command protocol, failsafe, instrumentation
+pi/            ⬜  Python: RealSense, obstacle detection, navigation (Story 2.6)
+docs/              ✅ wiring, architecture, bench manual, experiment specs
+  docs/experiments/   per-story experiment specifications
+tools/             ✅ host side
+  tools/rover_bench/  the bench driver — link, analyser, experiment, manifest,
+                      storage, registry, safety, doctor, cli, fakes
+  tools/analysis/     metrics with uncertainties, plots, report assembly
+  tools/session.py    session ritual — start, journal, wiki, close, lint, index
+tests/             ✅ 1137 host-side tests, 80 % coverage gate, no hardware
+experiments/       ✅ REGISTRY.md + one directory per experiment run
 memory/            the memory wiki — read MEMORY.md first
+.claude/skills/    ✅ close-ritual, rover-bench (provisional), memory-lint
 ```
 
 ---
@@ -172,10 +235,17 @@ memory/            the memory wiki — read MEMORY.md first
 
 ## 7. Known structural gaps
 
+**Closed 2026-08-31:** firmware toolchain decided (pico-sdk, C/CMake — the
+characterisation firmware is ~80 % of the production firmware, so MicroPython
+would have meant building it twice); test harness exists and is enforced;
+encoder decoding written; failsafe implemented.
+
 | Gap | Consequence |
 |---|---|
-| Failsafe timeout not implemented | a rover that keeps driving when the Pi dies — the one hazard `CLAUDE.md` calls non-negotiable |
-| No encoder decoding | no closed loop; everything is open-loop duty |
-| Firmware toolchain undecided | PIO quadrature is the forcing function |
-| No test harness | "run the FULL suite" has nothing to run |
+| **Nothing has been flashed** | every firmware claim above is a compile-time claim, not a runtime one |
+| **`ticks_per_rev` unmeasured** (11 vs 14 disputed) | no ticks→rad/s conversion exists, so every speed figure is emitted in ticks/s and flagged unconverted. Poisons odometry and the EKF downstream if ever guessed |
+| **Failsafe timing unmeasured** | it is implemented but the 300 ms is a constant, not yet a measured number. `CLAUDE.md` calls this non-negotiable |
+| Only analyser D0 physically probed | D1–D7 carry no signal; no direction, encoder or loop-timing capture is possible yet |
+| Motors 2–4 unwired; `VM` on the VBUS stopgap | the four-motor overlay — the point of Story 1.5 — cannot be produced |
+| `tools/analysis/` never run on real data | it works against `synthetic.py` only |
 | Skid-steer scrub | odometry unreliable during turns; current spikes; behaviour changes with surface friction |

@@ -510,3 +510,47 @@ def test_the_bench_manual_sends_you_to_the_device_for_the_sample_rate():
     assert "observation" in text or "not a specification" in text, \
         ("BENCH.md §5.1 quotes rates without labelling them an observation - "
          "which is how a one-machine, one-day reading becomes a spec")
+
+
+# ---------------------------------------------------------------------------
+# ARCHITECTURE.md was NOT covered by this file, and drifted: the two
+# instrumentation pins (GP20 LOOP_TICK, GP21 COMPUTE_BUSY) were added to the
+# firmware, to WIRING.md and to BENCH.md, and the architecture map never
+# learned about them. The map you read to orient was quietly wrong.
+# ---------------------------------------------------------------------------
+
+import pathlib as _pathlib
+
+_ARCH = _pathlib.Path(__file__).resolve().parents[1] / "docs" / "ARCHITECTURE.md"
+
+
+def test_architecture_pin_map_knows_the_instrumentation_pins():
+    text = _ARCH.read_text()
+    for token in ("GP20", "GP21", "LOOP_TICK", "COMPUTE_BUSY"):
+        assert token in text, (
+            f"docs/ARCHITECTURE.md does not mention {token}. It is the map read "
+            "to orient before touching unfamiliar code; a map missing a pin the "
+            "firmware drives is worse than no map."
+        )
+
+
+def test_architecture_agrees_with_wiring_on_the_instrumentation_pins():
+    """Both documents must name the same pin for the same signal."""
+    arch = _ARCH.read_text()
+    wiring = (_pathlib.Path(__file__).resolve().parents[1]
+              / "docs" / "WIRING.md").read_text()
+    for doc, name in ((arch, "ARCHITECTURE.md"), (wiring, "WIRING.md")):
+        assert "GP20" in doc and "LOOP_TICK" in doc, f"{name} lost LOOP_TICK/GP20"
+        assert "GP21" in doc and "COMPUTE_BUSY" in doc, f"{name} lost COMPUTE_BUSY/GP21"
+
+
+def test_architecture_does_not_claim_the_firmware_has_been_flashed():
+    """Verification honesty (CLAUDE.md self-review gate point 3): the firmware
+    compiles, and that is all. If someone later flashes it, this test should be
+    updated deliberately - not tripped over."""
+    text = _ARCH.read_text().lower()
+    assert "not yet flashed" in text or "never yet flashed" in text, (
+        "ARCHITECTURE.md must state that nothing has been flashed, until it has. "
+        "A compile-time claim presented as a runtime one is the exact failure "
+        "the self-review gate exists to catch."
+    )
