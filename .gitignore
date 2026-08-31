@@ -1,8 +1,30 @@
-*.pyc
+# --- secrets: never commit. Commit a *.example instead. ---
+*.key
+*.pem
+secrets.*
+!secrets.example.*
+.env
+wifi.conf
+tailscale-authkey*
+
+# --- python ---
 __pycache__/
+*.pyc
 .venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- pico / c build ---
 build/
 *.uf2
 *.elf
+*.bin
+*.dis
+
+# --- experiment raw captures: large, regenerable. CSV + manifests ARE committed. ---
 experiments/**/*.sr
-!.gitkeep
+experiments/**/*.srzip
+
+# --- os ---
+.DS_Store
