@@ -1,0 +1,8 @@
+*.pyc
+__pycache__/
+.venv/
+build/
+*.uf2
+*.elf
+experiments/**/*.sr
+!.gitkeep
