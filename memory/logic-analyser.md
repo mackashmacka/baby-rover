@@ -1,7 +1,40 @@
 # Logic analyser
 
 8-channel Cypress FX2 clone (Saleae-style), **VID:PID `0925:3881`**.
-Detected by `sigrok-cli`.
+Detected by `sigrok-cli` under the `fx2lafw` driver.
+
+## Capability — measured 2026-08-31, previously undocumented
+
+`sigrok-cli -d fx2lafw --show` reports **8 channels and 17 supported sample
+rates, 20 kHz to 48 MHz**. Treat **24 MHz as the working 8-channel ceiling**:
+on an FX2 the top rate is only reachable with a reduced channel count, and the
+USB 2.0 bulk pipe is the real limit. 24 MHz on all 8 channels is verified
+working; 48 MHz on 8 is not, and has not been tried.
+
+Earlier revisions of this page recorded no maximum at all, which is why
+`tools/rover_bench/analyser.py` **discovers the rate from the device at runtime
+and refuses to assume one**. A guessed rate produces a capture that looks
+perfectly fine and whose timebase is silently wrong — the worst failure mode an
+instrument has.
+
+**Gotcha, found the hard way:** libsigrok 0.5.2 (what Ubuntu 24.04 ships) does
+*not* print the rates inline after `samplerate:`. It prints a header ending in a
+colon and then **one rate per indented line**. A parser that only knows the
+inline comma-list and range forms reads a healthy analyser as having no rates.
+See `tests/test_regressions.py`.
+
+## Status — WORKING as of 2026-08-31
+
+First capture ever made with this instrument, on the laptop:
+**19,999.0 Hz at 50.00 % duty, 10 ns period jitter**, 240,000 samples at 24 MHz
+against a commanded 20 kHz / 50 % square on `GP2`. Data in
+`experiments/bench-verify/`, registry row `bench-verify`.
+
+That capture also settled the **0.89 V** open thread: a 50 %-duty 3.3 V line
+read 0.89 V on the DMM where ~1.65 V was expected. The analyser shows a clean
+50.00 % square, so the meter was failing to average a 20 kHz waveform. The
+instrument was fine; the meter was the wrong tool. See [[debugging-method]] —
+the falsifying evidence was stated before the measurement was taken.
 
 ## Status: was blocked on Windows, is trivially fixable on Linux
 

@@ -13,3 +13,4 @@ One line per file. Read this at every session start.
 ## Log layer (dated, append-only — never rewritten)
 
 - [2026-08-31-first-motor-under-pico](2026-08-31-first-motor-under-pico.md) — first N20 driven forward and reverse from the Pico; an evening lost to encoder wires in the H-bridge.
+- [2026-08-31-bench-built-analyser-proven](2026-08-31-bench-built-analyser-proven.md) — Bench built end to end on the laptop; analyser proven at 19,999 Hz / 50.00% duty; the 0.89 V mystery was the multimeter.

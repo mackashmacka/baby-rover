@@ -62,7 +62,9 @@ FX2_PIDS = ("3881", "3882")
 PICO_VID = "2e8a"
 
 FIRMWARE_GLOBS = (
+    "/usr/share/sigrok-firmware/fx2lafw-*.fw",
     "/usr/share/sigrok-firmware/fx2lafw-*.fx2",
+    "/usr/local/share/sigrok-firmware/fx2lafw-*.fw",
     "/usr/local/share/sigrok-firmware/fx2lafw-*.fx2",
 )
 
@@ -120,6 +122,7 @@ class Environment:
     globber: Callable[[str], list[str]] = glob.glob
     read_text: Callable[[str], str] = staticmethod(_read_text)
     groups: Callable[[], list[str]] | None = None
+    granted_groups: Callable[[], list[str]] | None = None
     analyser: Analyser | None = None
     can_write: Callable[[str], bool] = staticmethod(
         lambda path: os.access(path, os.W_OK)
@@ -140,6 +143,32 @@ def _current_groups(env: Environment) -> list[str]:
         names.add(grp.getgrgid(os.getgid()).gr_name)
         return sorted(names)
     except Exception:  # noqa: BLE001 - non-unix, or a gid with no group entry
+        return []
+
+
+def _granted_groups(env: Environment) -> list[str]:
+    """Groups /etc/group says the user is in, whether or not this login has
+    them yet.
+
+    usermod -aG takes effect at the next login, so between running the setup
+    script and logging out there is a window where the membership is granted
+    but every open() still fails with EACCES.  Reporting that as "not a
+    member" sends you to re-run a command that already worked.
+
+    If the caller injected a synthetic `groups` view but no `granted_groups`,
+    we return nothing rather than falling back to the real /etc/group: mixing a
+    fake active-group view with this laptop's real membership would make the
+    answer depend on who happens to be running the tests.
+    """
+    if env.granted_groups is not None:
+        return list(env.granted_groups())
+    if env.groups is not None:
+        return []
+    try:
+        import grp, getpass  # noqa: PLC0415 - unix only
+        user = getpass.getuser()
+        return sorted(g.gr_name for g in grp.getgrall() if user in g.gr_mem)
+    except Exception:  # noqa: BLE001
         return []
 
 
@@ -175,9 +204,17 @@ def check_groups(env: Environment) -> list[Finding]:
     if not have:
         return [Finding("groups", WARN, "could not read group membership",
                         f"check with: id -nG; then {SETUP_HINT}")]
+    granted = _granted_groups(env)
     for group in REQUIRED_GROUPS:
         if group in have:
             findings.append(Finding(f"group: {group}", OK, "member"))
+        elif group in granted:
+            # Membership exists in /etc/group; this login predates it.  Telling
+            # the user to run usermod again would be advice for the wrong bug.
+            findings.append(Finding(
+                f"group: {group}", FAIL, "granted, but not active in this login",
+                f"log out and back in, or run under: newgrp {group}",
+            ))
         else:
             findings.append(Finding(
                 f"group: {group}", FAIL, "not a member",
@@ -207,7 +244,7 @@ def check_fx2_firmware(env: Environment) -> Finding:
             return Finding("fx2lafw firmware", OK,
                            f"{len(found)} file(s) in {os.path.dirname(pattern)}")
     return Finding(
-        "fx2lafw firmware", FAIL, "no fx2lafw-*.fx2 found",
+        "fx2lafw firmware", FAIL, "no fx2lafw-*.fw or *.fx2 found",
         f"sudo apt install sigrok-firmware-fx2lafw   (or {SETUP_HINT})",
     )
 

@@ -9,6 +9,7 @@ Add the row when the experiment is run, not later. Raw data goes in
 | ID | Date | Story | Question | Method | Result | Data |
 |---|---|---|---|---|---|---|
 | _(example)_ | 2026-08-31 | 1.1 | What is the 6F22's internal resistance? | Measure open-circuit V, then V under ~50 mA | 8.2 V → 7.7 V ⇒ **~10 Ω**. Unusable for motors | — |
+| bench-verify | 2026-08-31 | 0 (Day 0 acceptance) | Does the logic analyser work, and is the 0.89 V DMM reading a real signal or a meter artefact? | Drove GP2 at 20 kHz / 50% duty from the MicroPython REPL with STBY held LOW so the H-bridge stayed disabled. Captured 240,000 samples at 24 MHz on D0-D7 with sigrok-cli (fx2lafw). | 19,999.0 Hz, duty 50.00%, period jitter 10 ns. Analyser proven - the first capture this project has made. D1-D7 flat (unprobed). The 0.89 V was the multimeter failing to average a 20 kHz square: hypothesis confirmed, meter blamed. Also measured: 8 channels, 17 rates up to 48 MHz, which no doc recorded. | experiments/bench-verify/ |
 
 ## Planned
 

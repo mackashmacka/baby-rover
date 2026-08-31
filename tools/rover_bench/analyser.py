@@ -268,17 +268,45 @@ def parse_show_output(stdout: str) -> dict[str, Any]:
     rates: tuple[int, ...] = ()
     discrete = True
     found = False
-    for line in (stdout or "").splitlines():
+    lines = (stdout or "").splitlines()
+    for i, line in enumerate(lines):
         stripped = line.strip()
         if ":" not in stripped:
             continue
         key = stripped.split(":", 1)[0].split("(", 1)[0].strip().lower()
-        if key != "samplerate":
+        # libsigrok labels this line three different ways depending on version:
+        #   "samplerate:"                      (inline list or range)
+        #   "samplerate - supported samplerates:"   (0.5.x, one rate per line)
+        # Match the leading token so all of them land here.
+        if key != "samplerate" and not key.startswith("samplerate"):
             continue
         body = stripped.split(":", 1)[1]
-        discrete = "," in body or "-" not in body
-        rates = parse_samplerate_spec(stripped)
         found = True
+        if body.strip():
+            # Inline form: a comma list, or a "lo - hi (in steps of N)" range.
+            discrete = "," in body or "-" not in body
+            rates = parse_samplerate_spec(stripped)
+            break
+        # Multi-line form (libsigrok 0.5.2, which is what Ubuntu 24.04 ships):
+        # the header ends in a colon and each supported rate follows on its own
+        # indented line, the active one suffixed "(current)". Consume until the
+        # indentation stops or a new key begins.
+        collected: list[int] = []
+        for follow in lines[i + 1:]:
+            if not follow.strip():
+                break
+            if not (follow.startswith(" ") or follow.startswith("\t")):
+                break
+            token = follow.strip().split("(")[0].strip()
+            if not token:
+                continue
+            try:
+                collected.append(parse_frequency(token))
+            except Exception:  # noqa: BLE001 - a new key, not a rate: stop
+                break
+        if collected:
+            rates = tuple(sorted(set(collected)))
+            discrete = True
         break
     if not found or not rates:
         raise AnalyserError(
