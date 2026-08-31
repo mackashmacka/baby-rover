@@ -914,6 +914,15 @@ def check_architecture(root: Path) -> Check:
     arch = root / "docs" / "ARCHITECTURE.md"
     if not arch.exists():
         return c.fail("docs/ARCHITECTURE.md does not exist")
+    # Prefer git over mtimes.  mtimes answer "which file did I save last",
+    # which is not the question: a commit that updates the map AND the source
+    # together is correct, but whichever was saved second loses.  A fresh clone
+    # is worse - every mtime is the checkout time, so the result is arbitrary.
+    # git answers the real question: has source been committed since the map
+    # was last committed?
+    verdict = _architecture_vs_git(root)
+    if verdict is not None:
+        return verdict
     newest, newest_mtime = newest_source_file(root)
     if newest is None:
         return c.note("no source files yet — nothing to be stale against")
@@ -924,6 +933,58 @@ def check_architecture(root: Path) -> Check:
             "it genuinely did not change — in which case touch it and say so in the diff."
         )
     return c.note(f"newest source: {newest.relative_to(root)}")
+
+
+def _architecture_vs_git(root: Path) -> "Check | None":
+    """Compare last-commit-touching-the-map against last-commit-touching-source.
+
+    Returns None (fall back to mtimes) when this is not a git tree, git is
+    absent, or the map has uncommitted edits — in that last case the working
+    tree is what matters and mtimes are the honest signal.
+    """
+    c = Check("3", "ARCHITECTURE.md matches reality (newer than the last source change)")
+    import subprocess  # noqa: PLC0415 - only needed on this path
+
+    def git(*args: str) -> "str | None":
+        try:
+            r = subprocess.run(("git", "-C", str(root)) + args,
+                               capture_output=True, text=True, timeout=15)
+        except Exception:  # noqa: BLE001 - no git, or not a repo
+            return None
+        return r.stdout.strip() if r.returncode == 0 else None
+
+    if git("rev-parse", "--git-dir") is None:
+        return None
+    # Uncommitted edits anywhere in the map or the source: mtimes are honest.
+    dirty = git("status", "--porcelain")
+    if dirty is None or dirty.strip():
+        return None
+
+    arch_commit = git("log", "-1", "--format=%H", "--", "docs/ARCHITECTURE.md")
+    if not arch_commit:
+        return c.fail("docs/ARCHITECTURE.md has never been committed")
+
+    arch_time = git("log", "-1", "--format=%ct", "--", "docs/ARCHITECTURE.md")
+    stale: list[str] = []
+    for ext in sorted(SOURCE_SUFFIXES):
+        listing = git("log", "-1", "--format=%ct|%H", "--",
+                      f"*{ext}") or ""
+        if not listing or "|" not in listing:
+            continue
+        when, commit = listing.split("|", 1)
+        # Same commit => the map moved with the source. That is the good case.
+        if commit.strip() == arch_commit:
+            continue
+        if arch_time and int(when) > int(arch_time):
+            stale.append(f"*{ext} (commit {commit.strip()[:8]})")
+    if stale:
+        return c.fail(
+            "source committed after ARCHITECTURE.md was last committed: "
+            + ", ".join(stale) + ".\n"
+            "Either the map gained a component/flow/invariant and was not updated,\n"
+            "or it genuinely did not change — in which case touch it and say so."
+        )
+    return c.note(f"map last moved in {arch_commit[:8]}, with or after the source")
 
 
 def check_next_steps(root: Path) -> Check:
