@@ -230,6 +230,16 @@ memory/            the memory wiki — read MEMORY.md first
 - **Per-wheel direction sign lives in firmware, not in the wiring.** Left and
   right wheels are physical mirrors; wire all four identically.
 - Never commit secrets. Commit a `*.example`.
+- **This document is enforced, not aspirational.** `tools/session.py close`
+  compares the last commit touching `ARCHITECTURE.md` against the last commit
+  touching source, and refuses to close a story when source has moved and the
+  map has not. Same commit is the good case: the map moves *with* the code.
+  `tests/test_docs_consistency.py` additionally pins the pin map here against
+  the firmware and `WIRING.md`, because the map drifting is the failure mode
+  that costs an afternoon and leaves no trace.
+- **Compile-time claims are labelled as such.** Section 4b says what has been
+  built and what has been *run*, and a test asserts this file does not claim
+  the firmware has been flashed until it has.
 
 ---
 
