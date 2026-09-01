@@ -490,7 +490,10 @@ def test_open_link_uses_the_injected_transport_factory():
         made["baud"] = baud
         return FakeTransport()
 
-    conn = link.open_link("/dev/ttyACM0", transport_factory=factory)
+    # `exists` is injected too.  Without it this test silently depended on a
+    # real Pico being plugged into this laptop -- see open_link's docstring.
+    conn = link.open_link("/dev/ttyACM0", transport_factory=factory,
+                          exists=lambda path: True)
     assert made["port"] == "/dev/ttyACM0"
     assert made["baud"] == UART_BAUD
     conn.close()

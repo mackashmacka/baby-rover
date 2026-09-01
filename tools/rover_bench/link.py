@@ -741,9 +741,20 @@ def open_link(port: str | None = None, *,
               retries: int = DEFAULT_RETRIES,
               clock: Clock | None = None,
               log: Callable[[str], None] | None = None,
-              transport_factory: Callable[..., Transport] | None = None) -> Link:
-    """Open a real link.  `transport_factory` is the seam for tests."""
-    resolved = resolve_port(port)
+              transport_factory: Callable[..., Transport] | None = None,
+              exists: Callable[[str], bool] = os.path.exists,
+              globber: Callable[[str], list[str]] = glob.glob) -> Link:
+    """Open a real link.  `transport_factory` is the seam for tests.
+
+    `exists`/`globber` are forwarded to `resolve_port` for a reason found the
+    hard way on 2026-09-01: without them, injecting a fake transport still left
+    the port *existence* check hitting the real /dev.  The seam looked complete
+    and was not, so `test_open_link_uses_the_injected_transport_factory` passed
+    only while a Pico happened to be plugged in, and failed the moment the USB
+    dock dropped.  A test whose result depends on what is on the bench is not
+    testing what it claims to test.
+    """
+    resolved = resolve_port(port, exists=exists, globber=globber)
     factory = transport_factory or SerialTransport
     transport = factory(resolved, baud, timeout_s)
     return Link(transport, timeout_s=timeout_s, retries=retries, clock=clock,

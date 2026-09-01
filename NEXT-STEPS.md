@@ -3,7 +3,7 @@
 Session state and handoff. **Assume you know nothing that is not written down
 here.**
 
-**Last updated:** 2026-08-31 (UTC) — end of the agent-machinery session.
+**Last updated:** 2026-09-01 (UTC) — pre-flight check before the first run.
 **Current story:** Day 0 — setup and its seven acceptance criteria (`docs/PLAN.md` §4, runbook `docs/setup.md`).
 **Session mode:** Ponytail full — one story per fresh conversation.
 
@@ -93,6 +93,33 @@ the command, not this table**, and run `sudo bash tools/bench-setup.sh`.
 
 Numbers are stable labels, not positions. A closed blocker keeps its number and
 moves to the closed list rather than being renumbered.
+
+### 0. Bench is NOT ready to run — two physical faults 🔴
+
+Found 2026-09-01 by `probe-map`, before anything was flashed. Both are
+five-minute fixes at the bench; neither is detectable in software.
+
+**0a. Analyser D2 and D3 are swapped.** D2 is on `GP5` (`STBY`), D3 is on `GP4`
+(`AIN2`). Move the D2 lead to header **pin 6** and the D3 lead to **pin 7**.
+Then re-run `probe-map` and set both rows in `WIRING.md` §10.2 to ✅. Do **not**
+compensate in software — see §10.2.1.
+
+**0b. `GP12`/`GP13` are held low by something external.** Both read 0 against
+the RP2350's ≈55 kΩ internal pull-up, so they do not float and something is
+attached — contradicting §3, which had them as ⬜ *not wired*. Cheapest
+diagnostic, no instruments: **turn the motor shaft by hand and re-read**
+(`experiments/probe-map/method-encoder-passive.py`). A powered encoder toggles;
+an unpowered one stays flat. Prime suspect: blue never reached 3.3 V. See
+§10.2.2 for the other two candidates.
+
+Confirmed good and needing no attention: D0 (`GP2`), D1 (`GP3`), D6 (`GP20`),
+D7 (`GP21`), and analyser ground is common with the Pico.
+
+### 0c. Firmware has never been flashed 🔴
+`firmware/build/rover_bench.uf2` compiles clean and has **never run**. The Pico
+still enumerates as `2e8a:0005 MicroPython Board in FS mode`. Every firmware
+claim in this repo is a compile-time claim. Flash it (BOOTSEL → copy the `.uf2`)
+only after 0a and 0b are fixed, so the first run produces trustworthy data.
 
 ### 1. Encoder counts per revolution unresolved 🔴
 Sources disagree — Adafruit says 14 counts/rev, retailer listings say 11 —

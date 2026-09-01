@@ -36,6 +36,7 @@ def an_environment(**kw):
         groups=lambda: [],
         analyser=None,
         can_write=lambda path: True,
+        sleep=lambda seconds: None,
     )
     defaults.update(kw)
     return doctor.Environment(**defaults)
@@ -90,6 +91,7 @@ def a_healthy_environment(**kw):
         groups=lambda: ["dialout", "plugdev"],
         analyser=OkAnalyser(),
         can_write=lambda path: True,
+        sleep=lambda seconds: None,
     )
     defaults.update(kw)
     return doctor.Environment(**defaults)

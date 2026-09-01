@@ -81,3 +81,43 @@ Outstanding job for it: an unexplained **0.89 V** DMM reading on a 50%-duty
 average a 20 kHz square wave — but that is a hypothesis, not a finding.
 
 Related: [[n20-motors]], [[debugging-method]]
+
+## Channel maps are hypotheses until measured — 2026-09-01
+
+`bench-verify` proved the instrument worked by driving one pin and reading one
+channel. That is **not** the same as knowing where the other seven leads are,
+and the difference is invisible in the data: an unprobed channel and a correctly
+probed idle channel both read a flat 0 with no edges. Nothing in a capture
+distinguishes them.
+
+**The test that does distinguish them:** drive each pin *alone*, with a
+**unique edge count** per pin (10, 20, 40, 80...). Then the mapping is read off
+the capture rather than inferred. Identical patterns on two pins would be
+ambiguous; distinct counts cannot be.
+
+First time this was run — `probe-map`, 2026-09-01 — **D2 and D3 were swapped.**
+The wiring doc was wrong, and every capture taken before that point would have
+decoded direction backwards while looking completely plausible.
+
+**Correct it at the clips, never in the analysis code.** Remapping in software
+makes a `.sr` file mean something other than what its filename claims, and no
+downstream check can catch it.
+
+Re-run `probe-map` after any re-clipping, and before the first capture of any
+new campaign. It costs about a minute.
+
+## `doctor` must retry a cold analyser — 2026-09-01
+
+A cold FX2 has **no firmware in RAM**. The first `sigrok-cli` call after a
+replug uploads it; the device then drops off the bus and re-enumerates, and any
+call racing that window answers `No devices found.` — from a completely healthy
+instrument.
+
+So the first sigrok invocation after plugging in is *expected* to fail. Retry
+before concluding anything. `rover_bench.doctor` now tries three times a second
+apart (`ANALYSER_COLD_RETRIES`); the delay is injected so tests pay no wall clock.
+
+Related: a passive way to interrogate a pin without contention is the internal
+pull-up/pull-down read-back on the Pico — a floating pin follows the pull, a
+driven one does not. That is how `GP12`/`GP13` were found to be held low without
+risking driving against a live encoder output.

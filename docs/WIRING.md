@@ -8,7 +8,7 @@ constants. That file is ground truth and stays stable; this one is allowed to
 churn. Never copy a rating into this file: link to it instead, so there is only
 ever one place a number can be wrong.
 
-Last updated **2026-08-31**. Log at §9.
+Last updated **2026-09-01**. Log at §9.
 
 | | |
 |---|---|
@@ -88,8 +88,8 @@ control for PID while saving four pins.
 | `GP8` | 11 | `AIN1`/`BIN1` — right side direction | ⬜ |
 | `GP9` | 12 | `AIN2`/`BIN2` — right side direction | ⬜ |
 | `GP10` | 14 | `PWMB` — right rear speed | ⬜ |
-| `GP12` | 16 | Encoder — left front, ch A | ⬜ |
-| `GP13` | 17 | Encoder — left front, ch B | ⬜ |
+| `GP12` | 16 | Encoder — left front, ch A | ❓ **held low — §10.2.2** |
+| `GP13` | 17 | Encoder — left front, ch B | ❓ **held low — §10.2.2** |
 | `GP14` | 19 | Encoder — left rear, ch A | ⬜ |
 | `GP15` | 20 | Encoder — left rear, ch B | ⬜ |
 | `GP16` | 21 | Encoder — right front, ch A | ⬜ |
@@ -97,7 +97,8 @@ control for PID while saving four pins.
 | `GP18` | 24 | Encoder — right rear, ch A | ⬜ |
 | `GP19` | 25 | Encoder — right rear, ch B | ⬜ |
 
-`GP11`, `GP20–GP22`, `GP26–GP28` spare. **`GP23/24/25/29` unusable** — CYW43439.
+`GP11`, `GP22`, `GP26–GP28` spare. **`GP20`/`GP21` are no longer spare** — they
+are bench instrumentation, §10.1. **`GP23/24/25/29` unusable** — CYW43439.
 
 > **"Channel A" is a naming convention, not a wiring constraint.** Yellow and
 > green are interchangeable at the connector — pick one as A, verify the phase
@@ -255,6 +256,8 @@ Append a line whenever wiring changes. Newest last.
 | 2026-08-31 | Harness colours corrected to the real N20 mapping (red/white motor, black GND, blue 3.3 V, yellow/green halls). **Supersedes the previous `P1`–`P6` numbered pinout, which described a different motor and is void** |
 | 2026-08-31 | Full four-motor pin map drafted; encoders assigned `GP12`–`GP19` |
 | 2026-08-31 | **Bench instrumentation committed — see §10.** `GP20` = `LOOP_TICK`, `GP21` = `COMPUTE_BUSY`. Analyser D6/D7 move off the UART pins for Stories 1.5/1.6 |
+| 2026-09-01 | **Probe map measured, not assumed** (`probe-map`). D0/D1/D6/D7 correct. **D2↔D3 swapped at the clips** — §10.2.1. Analyser ground confirmed common |
+| 2026-09-01 | `GP12`/`GP13` found **held low by something external** — §10.2.2. §3 had them as ⬜ *not wired*; that was wrong. Blocks Stories 1.4 and 1.5 |
 
 ---
 
@@ -292,16 +295,58 @@ All 3.3 V logic. Ground the analyser to the common rail — the nearest header
 GNDs are **pin 3** (D0–D3), **pin 18** (D4/D5) and **pin 28** (D6/D7). Connect
 every ground lead the analyser has.
 
-| CH | Signal | Pico GP | Pico pin |
+| CH | Signal | Pico GP | Pico pin | Verified |
+|---|---|---|---|---|
+| D0 | `PWMA` | `GP2` | 4 | ✅ 2026-09-01 |
+| D1 | `AIN1` | `GP3` | 5 | ✅ 2026-09-01 |
+| D2 | `AIN2` | `GP4` | 6 | ❌ **probe is on `GP5`** — see below |
+| D3 | `STBY` | `GP5` | 7 | ❌ **probe is on `GP4`** — see below |
+| D4 | Encoder A (yellow) | `GP12` | 16 | ❓ pin held low, see §10.2.2 |
+| D5 | Encoder B (green) | `GP13` | 17 | ❓ pin held low, see §10.2.2 |
+| **D6** | **`LOOP_TICK`** | **`GP20`** | **26** | ✅ 2026-09-01 |
+| **D7** | **`COMPUTE_BUSY`** | **`GP21`** | **27** | ✅ 2026-09-01 |
+
+#### 10.2.1 ⚠️ D2/D3 are physically swapped right now
+
+Measured 2026-09-01, experiment `probe-map`. Each pin was driven alone with a
+unique edge count, so the mapping is not inferred — it is read off directly:
+
+| Driven | Edges | Appeared on | Should be |
 |---|---|---|---|
-| D0 | `PWMA` | `GP2` | 4 |
-| D1 | `AIN1` | `GP3` | 5 |
-| D2 | `AIN2` | `GP4` | 6 |
-| D3 | `STBY` | `GP5` | 7 |
-| D4 | Encoder A (yellow) | `GP12` | 16 |
-| D5 | Encoder B (green) | `GP13` | 17 |
-| **D6** | **`LOOP_TICK`** | **`GP20`** | **26** |
-| **D7** | **`COMPUTE_BUSY`** | **`GP21`** | **27** |
+| `GP2` | 10 | D0 | D0 ✅ |
+| `GP3` | 20 | D1 | D1 ✅ |
+| `GP4` | 40 | **D3** | D2 ❌ |
+| `GP5` | 80 | **D2** | D3 ❌ |
+
+**Fix it at the clips, not in software.** Move the D2 lead to pin 6 (`GP4`) and
+the D3 lead to pin 7 (`GP5`), then re-run `probe-map` and set both rows above to
+✅. Correcting a channel map in the analysis code instead is how a capture ends
+up meaning something different from what its own filename says.
+
+Until it is fixed, **a capture taken now records `STBY` on D2 and `AIN2` on D3** —
+which reverses the direction decode and makes the failsafe measurement read the
+wrong edge.
+
+#### 10.2.2 ❓ `GP12`/`GP13` are held low by something external
+
+Also 2026-09-01. Configured as inputs with the RP2350's internal pull-up
+(≈55 kΩ) and read back **0**; with pull-down, also 0. A floating pin follows the
+pull. **These pins do not float, so something is attached** — which contradicts
+§3, where both were still marked ⬜ *planned, not wired*.
+
+Three candidates, cheapest test first:
+
+1. **Encoder wired but unpowered** — blue never reached 3.3 V. Most likely.
+   Check continuity blue → pin 36, and that the motor's black is on the common rail.
+2. **A probe or jumper clipped to a GND pin** instead of 16/17. Pin 18 is GND and
+   sits directly between them.
+3. **Encoder on the wrong pins**, with 16/17 shorted to ground elsewhere.
+
+Distinguishing test, no instruments needed: **turn the motor shaft by hand** and
+re-read. A powered encoder toggles; an unpowered one stays flat.
+
+**This blocks every speed measurement.** `ticks_per_rev` (Story 1.4) and the
+duty→rad/s curve (Story 1.5) have no signal to count until it is resolved.
 
 ⚠️ **Never `AO1`/`AO2`/`BO1`/`BO2`** — rule 4. Motor voltage destroys the
 analyser, and it fails by reading garbage on a channel you then trust.

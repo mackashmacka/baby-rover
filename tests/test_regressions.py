@@ -7,7 +7,7 @@ import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
 
 import pytest
-from rover_bench import analyser, doctor
+from rover_bench import analyser, doctor, link
 
 
 # ---------------------------------------------------------------------------
@@ -115,3 +115,165 @@ def test_a_synthetic_group_view_never_falls_back_to_the_real_system():
     """The bug in the fix for the bug: reading the laptop's real /etc/group from
     inside a unit test made the result depend on who ran the suite."""
     assert doctor._granted_groups(doctor.Environment(groups=lambda: ["users"])) == []
+
+
+# --------------------------------------------------------------------------
+# 2026-09-01 — doctor called a healthy analyser broken
+# --------------------------------------------------------------------------
+
+def test_doctor_retries_a_cold_analyser_instead_of_failing_it():
+    """A cold FX2 has no firmware in RAM.
+
+    The first sigrok call after a replug uploads it; the device then drops off
+    the bus and re-enumerates, and anything racing that window answers "No
+    devices found".  Observed for real on 2026-09-01: `doctor` reported
+    `--show failed`, and three seconds later the identical command listed all
+    eight channels.  The instrument was fine.
+
+    This matters more than a cosmetic wrong label.  `doctor` is the thing that
+    decides whether the bench may run at all, so a false FAIL here stops a
+    session that had nothing wrong with it — and it trains the owner to ignore
+    the one check whose whole job is to be believed.
+    """
+    # NOTE: `analyser.AnalyserError` from this module's own import, NOT
+    # `tools.rover_bench.analyser`.  conftest puts `tools/` on sys.path, so the
+    # same file is importable under two names and yields two distinct class
+    # objects — an `except` against the wrong one silently never matches.
+    AnalyserError = analyser.AnalyserError
+    from test_doctor import a_healthy_environment, by_name
+
+    class ColdThenWarm:
+        """Fails exactly as the real device does, then comes good."""
+
+        def __init__(self):
+            self.calls = 0
+
+        def available(self):
+            return True
+
+        def present(self):
+            return True
+
+        def scan(self):
+            return [{"driver": "fx2lafw", "description": "Saleae Logic",
+                     "channels": [f"D{i}" for i in range(8)]}]
+
+        def capabilities(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise AnalyserError("sigrok-cli --driver fx2lafw --show "
+                                    "failed (rc=1): No devices found.")
+
+            class Caps:
+                sample_rates_hz = (20_000, 24_000_000)
+                channels = tuple(f"D{i}" for i in range(8))
+                max_sample_rate_hz = 48_000_000
+            return Caps()
+
+    instrument = ColdThenWarm()
+    findings = by_name(doctor.diagnose(
+        ".", env=a_healthy_environment(analyser=instrument)))
+
+    assert findings["analyser answers"].status == doctor.OK
+    assert instrument.calls == 2, "should have retried exactly once, not given up"
+
+
+def test_doctor_still_warns_when_the_analyser_never_answers():
+    """The retry must not paper over a genuinely dead instrument.
+
+    Three failures is a real fault, and doctor has to keep saying so — the
+    point of the retry is to remove a false alarm, not to become unfalsifiable.
+    """
+    # NOTE: `analyser.AnalyserError` from this module's own import, NOT
+    # `tools.rover_bench.analyser`.  conftest puts `tools/` on sys.path, so the
+    # same file is importable under two names and yields two distinct class
+    # objects — an `except` against the wrong one silently never matches.
+    AnalyserError = analyser.AnalyserError
+    from test_doctor import a_healthy_environment, by_name
+
+    class NeverAnswers:
+        def __init__(self):
+            self.calls = 0
+
+        def available(self):
+            return True
+
+        def present(self):
+            return True
+
+        def scan(self):
+            return [{"driver": "fx2lafw", "description": "Saleae Logic"}]
+
+        def capabilities(self):
+            self.calls += 1
+            raise AnalyserError("No devices found.")
+
+    instrument = NeverAnswers()
+    findings = by_name(doctor.diagnose(
+        ".", env=a_healthy_environment(analyser=instrument)))
+
+    assert not findings["analyser answers"].status == doctor.OK
+    assert instrument.calls == doctor.ANALYSER_COLD_RETRIES
+    assert "3 attempts" in findings["analyser answers"].detail
+
+
+def test_doctor_does_not_really_sleep_between_retries_in_tests():
+    """The delay is injected, so the suite never pays a second of wall clock.
+
+    A retry loop that calls `time.sleep` directly is untestable without making
+    the suite slow, and a slow suite is one that stops being run.
+    """
+    import inspect
+    source = inspect.getsource(doctor.check_analyser_answers)
+    assert "env.sleep" in source
+    assert "time.sleep(" not in source
+
+
+# --------------------------------------------------------------------------
+# 2026-09-01 — a "no hardware needed" test needed hardware
+# --------------------------------------------------------------------------
+
+def test_open_link_never_touches_the_real_filesystem_when_seams_are_injected():
+    """`open_link`'s test seam was incomplete and nobody could tell.
+
+    `transport_factory` let a test supply a fake transport, but `open_link`
+    still called `resolve_port(port)` with the default `os.path.exists`.  So the
+    port-existence check went to the real /dev regardless, and
+    `test_open_link_uses_the_injected_transport_factory` passed only because a
+    Pico happened to be attached to this laptop.  When the USB dock dropped on
+    2026-09-01 it failed with `PortNotFound` — from a pure unit test.
+
+    That is the worst kind of suite defect: it does not report a false failure,
+    it reports a false *pass*, and it makes the whole "1143 tests, none need
+    hardware" claim untrue in a way no one would notice until CI, or a laptop
+    without a rover on it.
+    """
+    calls = []
+
+    def never_call_me(path):
+        calls.append(path)
+        raise AssertionError("open_link reached the real filesystem")
+
+    class Dummy:
+        def write(self, data): pass
+        def read_line(self, timeout_s=None): return ""
+        def close(self): pass
+
+    conn = link.open_link(
+        "/dev/does-not-exist",
+        transport_factory=lambda port, baud, timeout_s: Dummy(),
+        exists=lambda path: True,
+        globber=never_call_me,
+    )
+    conn.close()
+    assert calls == []
+
+
+def test_open_link_still_refuses_a_port_that_is_really_absent():
+    """The seam must not become a way to skip the check in production.
+
+    With no injection, an absent port is still a hard error — the operator gets
+    told the Pico is not there rather than a confusing failure three calls later.
+    """
+    with pytest.raises(link.PortNotFound):
+        link.open_link("/dev/definitely-not-a-real-port-12345")

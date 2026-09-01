@@ -14,3 +14,4 @@ One line per file. Read this at every session start.
 
 - [2026-08-31-first-motor-under-pico](2026-08-31-first-motor-under-pico.md) — first N20 driven forward and reverse from the Pico; an evening lost to encoder wires in the H-bridge.
 - [2026-08-31-bench-built-analyser-proven](2026-08-31-bench-built-analyser-proven.md) — Bench built end to end on the laptop; analyser proven at 19,999 Hz / 50.00% duty; the 0.89 V mystery was the multimeter.
+- [2026-09-01-probe-map-d2-d3-swapped](2026-09-01-probe-map-d2-d3-swapped.md) — Probe continuity measured before the first run: D2/D3 swapped at the clips, GP12/GP13 held low by something external. Both would have corrupted Story 1.5.

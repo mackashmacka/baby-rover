@@ -48,6 +48,7 @@ import os
 import platform
 import shutil
 import sys
+import time
 from dataclasses import dataclass
 from typing import Callable, Sequence
 
@@ -75,6 +76,12 @@ UDEV_RULE_GLOBS = (
 )
 
 REQUIRED_GROUPS = ("dialout", "plugdev")
+
+# A cold FX2 needs its firmware uploaded; that takes one failed call plus a
+# USB re-enumeration.  Three tries a second apart covers it without making
+# `doctor` feel hung when the analyser really is absent.
+ANALYSER_COLD_RETRIES = 3
+ANALYSER_COLD_RETRY_DELAY_S = 1.0
 
 SETUP_HINT = "sudo bash tools/bench-setup.sh"
 
@@ -127,6 +134,7 @@ class Environment:
     can_write: Callable[[str], bool] = staticmethod(
         lambda path: os.access(path, os.W_OK)
     )
+    sleep: Callable[[float], None] = staticmethod(time.sleep)
 
 
 # --------------------------------------------------------------------------
@@ -349,17 +357,29 @@ def check_analyser_answers(env: Environment) -> Finding:
     if not matching:
         return Finding("analyser answers", FAIL, "scan found no fx2lafw device",
                        "replug; check the plugdev group and the udev rule")
-    try:
-        caps = analyser.capabilities()
-        rates = caps.sample_rates_hz
-        detail = (f"{matching[0].get('description', DRIVER)}, "
-                  f"{len(caps.channels)} channels, "
-                  f"{len(rates)} sample rates up to {caps.max_sample_rate_hz} Hz")
-    except AnalyserError as exc:
-        return Finding("analyser answers", WARN,
-                       f"device found but --show failed: {exc}",
-                       "the capture rate must be discovered, never assumed")
-    return Finding("analyser answers", OK, detail)
+    # A cold FX2 has no firmware in RAM.  The first sigrok call after a replug
+    # UPLOADS it, the device drops off the bus and re-enumerates, and any call
+    # racing that window answers "No devices found" — so a perfectly healthy
+    # analyser gets reported broken.  Observed 2026-09-01: doctor said --show
+    # failed, three seconds later the same command listed all 8 channels.
+    # Retry rather than describe a working instrument as a fault.
+    exc: AnalyserError | None = None
+    for attempt in range(ANALYSER_COLD_RETRIES):
+        try:
+            caps = analyser.capabilities()
+            rates = caps.sample_rates_hz
+            detail = (f"{matching[0].get('description', DRIVER)}, "
+                      f"{len(caps.channels)} channels, "
+                      f"{len(rates)} sample rates up to {caps.max_sample_rate_hz} Hz")
+            return Finding("analyser answers", OK, detail)
+        except AnalyserError as err:
+            exc = err
+            if attempt < ANALYSER_COLD_RETRIES - 1:
+                env.sleep(ANALYSER_COLD_RETRY_DELAY_S)
+    return Finding("analyser answers", WARN,
+                   f"device found but --show failed after "
+                   f"{ANALYSER_COLD_RETRIES} attempts: {exc}",
+                   "the capture rate must be discovered, never assumed")
 
 
 def check_experiments_dir(env: Environment, repo_root: str) -> Finding:
